@@ -1,0 +1,19 @@
+
+version: '3'
+
+tasks:
+  download:
+    cmds:
+      - bun scripts/download-openapi.mjs
+      
+  generate:
+    cmds:
+      - bun scripts/generate-api-docs.mjs
+
+  clean:
+    cmds:
+      - bun scripts/clean-mdx.mjs
+      
+  dev:
+    cmds:
+      - bun i && bun run dev
