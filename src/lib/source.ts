@@ -1,4 +1,4 @@
-import { createMDXSource } from 'fumadocs-mdx';
+import { createMDXSource } from 'fumadocs-mdx/runtime/next';
 import { loader } from 'fumadocs-core/source';
 import { transformerOpenAPI } from 'fumadocs-openapi/server';
 import { docs, meta } from '@/.source';
