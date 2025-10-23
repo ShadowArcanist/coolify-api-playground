@@ -9,10 +9,6 @@ tasks:
   generate:
     cmds:
       - bun scripts/generate-api-docs.mjs
-
-  clean:
-    cmds:
-      - bun scripts/clean-mdx.mjs
       
   dev:
     cmds:
