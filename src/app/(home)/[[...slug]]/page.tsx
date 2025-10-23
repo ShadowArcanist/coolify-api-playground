@@ -47,6 +47,7 @@ export async function generateMetadata(props: {
   return {
     title: page.data.title,
     description: page.data.description,
+    metadataBase: new URL('http://localhost:3000'),
     openGraph: {
       images: image,
     },
