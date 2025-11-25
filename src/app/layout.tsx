@@ -20,7 +20,12 @@ export default function Layout({ children }: { children: ReactNode }) {
       suppressHydrationWarning
     >
       <body className="flex flex-col min-h-screen">
-        <RootProvider>{children}</RootProvider>
+        <RootProvider           
+          search={{
+          options: {
+            type: 'static',
+          },
+        }}>{children}</RootProvider>
       </body>
     </html>
   );
