@@ -10,6 +10,10 @@ tasks:
     cmds:
       - bun scripts/generate-api-docs.mjs
       
+  update-openapi:
+    cmds:
+      - head -12 sample-openapi.yaml > new.yaml && echo "paths:" >> new.yaml && tail -n +10 openapi.yaml >> new.yaml && mv new.yaml openapi.yaml
+
   dev:
     cmds:
       - bun i && bun run dev
