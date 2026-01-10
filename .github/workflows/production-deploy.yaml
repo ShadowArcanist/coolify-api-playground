@@ -1,0 +1,39 @@
+name: Deploy API Playground to Production
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+  repository_dispatch:
+    types: [coolify-release]
+
+jobs:
+  deploy-production:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.2.22
+
+      - name: Install dependencies
+        run: bun install --no-cache
+
+      - name: Build static Next.js site
+        env:
+          VERSION: ${{ github.event_name == 'release' && github.event.release.tag_name || (github.event_name == 'repository_dispatch' && github.event.client_payload.version || '') }}
+        run: |
+          echo "Building with version: $VERSION"
+          bun run build
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy out --project-name=coolify-api --branch main
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}

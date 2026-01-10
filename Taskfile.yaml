@@ -5,14 +5,20 @@ tasks:
   download:
     cmds:
       - bun scripts/download-openapi.mjs
-      
+
   generate:
     cmds:
       - bun scripts/generate-api-docs.mjs
-      
+
   update-openapi:
     cmds:
-      - head -12 sample-openapi.yaml > new.yaml && echo "paths:" >> new.yaml && tail -n +10 openapi.yaml >> new.yaml && mv new.yaml openapi.yaml
+      - bun scripts/update-openapi.mjs
+
+  update:
+    cmds:
+      - task: download
+      - task: update-openapi
+      - task: generate
 
   dev:
     cmds:

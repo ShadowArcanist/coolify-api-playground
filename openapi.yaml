@@ -1,15 +1,11 @@
 openapi: 3.1.0
 info:
   title: Coolify
-  version: 'v4.0.0-beta.460'
+  version: '0.1'
 servers:
-  - url: 'https://app.coolify.io/api/v1'
-    description: 'Coolify Cloud API'
-  - url: 'http://{self_hosted_domain}/api/v1'
-    variables:
-      self_hosted_domain:
-        default: ''
-        description: 'Enter the domain of your Self-Hosted Coolify instance (do not include https:// or http://)'
+  -
+    url: 'https://app.coolify.io/api/v1'
+    description: 'Coolify Cloud API. Change the host to your own instance if you are self-hosting.'
 paths:
   /applications:
     get:

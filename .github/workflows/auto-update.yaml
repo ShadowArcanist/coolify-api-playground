@@ -1,0 +1,101 @@
+name: Auto-Update API Playground
+
+on:
+  repository_dispatch:
+    types: [coolify-release]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Specific Coolify version to use (e.g., v4.0.0-beta.437)'
+        required: false
+        default: ''
+  schedule:
+    - cron: '0 */4 * * *'
+
+jobs:
+  update-api-playground:
+    runs-on: ubuntu-latest
+    if: github.repository == 'ShadowArcanist/coolify-api-playground'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.2.22
+
+      - name: Get Coolify release version
+        id: version
+        if: inputs.version == ''
+        run: |
+          VERSION=$(curl -s https://api.github.com/repos/coollabsio/coolify/releases/latest | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+        shell: bash
+
+      - name: Set version
+        id: set_version
+        run: |
+          VERSION="${{ inputs.version != '' && inputs.version || steps.version.outputs.version }}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+        shell: bash
+
+      - name: Download openapi.yaml from Coolify
+        run: |
+          curl -sL "https://github.com/coollabsio/coolify/raw/v4.x/openapi.yaml" -o sample-openapi.yaml
+        shell: bash
+
+      - name: Create openapi.yaml with correct version and servers
+        run: |
+          head -3 sample-openapi.yaml > openapi.yaml
+          echo "  version: '${{ steps.set_version.outputs.version }}'" >> openapi.yaml
+          sed -n '5,12p' sample-openapi.yaml >> openapi.yaml
+          tail -n +13 sample-openapi.yaml >> openapi.yaml
+        shell: bash
+
+      - name: Update content/meta.json with version
+        run: |
+          VERSION="${{ steps.set_version.outputs.version }}"
+          printf '{"pages": ["---%s---", "..."]}\n' "$VERSION" > content/meta.json
+        shell: bash
+
+      - name: Verify update
+        run: |
+          echo "Updated to version:"
+          grep "version:" openapi.yaml
+          echo ""
+          echo "content/meta.json:"
+          cat content/meta.json
+
+      - name: Install dependencies
+        run: bun install --no-cache
+
+      - name: Generate API documentation
+        run: bun scripts/generate-api-docs.mjs
+
+      - name: Build Next.js site
+        run: bun run build
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy out --project-name=coolify-api --branch master
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git commit -m "Update API docs to ${{ steps.set_version.outputs.version }}"
+          git push
+        shell: bash
