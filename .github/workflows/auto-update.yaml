@@ -48,15 +48,18 @@ jobs:
 
       - name: Download openapi.yaml from Coolify
         run: |
-          curl -sL "https://github.com/coollabsio/coolify/raw/v4.x/openapi.yaml" -o sample-openapi.yaml
-        shell: bash
+          curl -sL "https://github.com/coollabsio/coolify/raw/v4.x/openapi.yaml" -o openapi.yaml
 
-      - name: Create openapi.yaml with correct version and servers
+      - name: Update version and servers
         run: |
-          head -3 sample-openapi.yaml > openapi.yaml
-          echo "  version: '${{ steps.set_version.outputs.version }}'" >> openapi.yaml
-          sed -n '5,12p' sample-openapi.yaml >> openapi.yaml
-          tail -n +13 sample-openapi.yaml >> openapi.yaml
+          # Update version
+          sed -i "s/^  version: '.*'/  version: '${{ steps.set_version.outputs.version }}'/" openapi.yaml
+
+          # Replace servers section (lines 5-8) with sample-openapi.yaml servers
+          head -4 openapi.yaml > openapi-temp.yaml
+          sed -n '5,12p' sample-openapi.yaml >> openapi-temp.yaml
+          tail -n +9 openapi.yaml >> openapi-temp.yaml
+          mv openapi-temp.yaml openapi.yaml
 
       - name: Verify servers section
         run: |
