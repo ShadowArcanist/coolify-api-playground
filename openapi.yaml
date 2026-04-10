@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Coolify
-  version: 'v4.0.0-beta.470'
+  version: 'v4.0.0-beta.472'
 servers:
   - url: 'https://app.coolify.io/api/v1'
     description: 'Coolify Cloud API'
@@ -295,6 +295,10 @@ paths:
                   type: boolean
                   default: true
                   description: 'Escape special characters in labels. By default, $ (and other chars) is escaped. So if you write $ in the labels, it will be saved as $$. If you want to use env variables inside the labels, turn this off.'
+                is_preserve_repository_enabled:
+                  type: boolean
+                  default: false
+                  description: 'Preserve repository during deployment.'
               type: object
       responses:
         '201':
@@ -579,6 +583,10 @@ paths:
                   type: boolean
                   default: true
                   description: 'Escape special characters in labels. By default, $ (and other chars) is escaped. So if you write $ in the labels, it will be saved as $$. If you want to use env variables inside the labels, turn this off.'
+                is_preserve_repository_enabled:
+                  type: boolean
+                  default: false
+                  description: 'Preserve repository during deployment.'
               type: object
       responses:
         '201':
@@ -863,6 +871,10 @@ paths:
                   type: boolean
                   default: true
                   description: 'Escape special characters in labels. By default, $ (and other chars) is escaped. So if you write $ in the labels, it will be saved as $$. If you want to use env variables inside the labels, turn this off.'
+                is_preserve_repository_enabled:
+                  type: boolean
+                  default: false
+                  description: 'Preserve repository during deployment.'
               type: object
       responses:
         '201':
@@ -1745,6 +1757,9 @@ paths:
                   type: boolean
                   default: true
                   description: 'Escape special characters in labels. By default, $ (and other chars) is escaped. So if you write $ in the labels, it will be saved as $$. If you want to use env variables inside the labels, turn this off.'
+                is_preserve_repository_enabled:
+                  type: boolean
+                  description: 'Preserve git repository during application update. If false, the existing repository will be removed and replaced with the new one. If true, the existing repository will be kept and the new one will be ignored. Default is false.'
               type: object
       responses:
         '200':
@@ -2723,6 +2738,10 @@ paths:
                 database_backup_retention_max_storage_s3:
                   type: integer
                   description: 'Max storage (MB) for S3 backups'
+                timeout:
+                  type: integer
+                  description: 'Backup job timeout in seconds (min: 60, max: 36000)'
+                  default: 3600
               type: object
       responses:
         '201':
@@ -2877,6 +2896,9 @@ paths:
                 public_port:
                   type: integer
                   description: 'Public port of the database'
+                public_port_timeout:
+                  type: integer
+                  description: 'Public port timeout in seconds (default: 3600)'
                 limits_memory:
                   type: string
                   description: 'Memory limit of the database'
@@ -3111,6 +3133,10 @@ paths:
                 database_backup_retention_max_storage_s3:
                   type: integer
                   description: 'Max storage of the backup in S3'
+                timeout:
+                  type: integer
+                  description: 'Backup job timeout in seconds (min: 60, max: 36000)'
+                  default: 3600
               type: object
       responses:
         '200':
@@ -3193,6 +3219,9 @@ paths:
                 public_port:
                   type: integer
                   description: 'Public port of the database'
+                public_port_timeout:
+                  type: integer
+                  description: 'Public port timeout in seconds (default: 3600)'
                 limits_memory:
                   type: string
                   description: 'Memory limit of the database'
@@ -3285,6 +3314,9 @@ paths:
                 public_port:
                   type: integer
                   description: 'Public port of the database'
+                public_port_timeout:
+                  type: integer
+                  description: 'Public port timeout in seconds (default: 3600)'
                 limits_memory:
                   type: string
                   description: 'Memory limit of the database'
@@ -3374,6 +3406,9 @@ paths:
                 public_port:
                   type: integer
                   description: 'Public port of the database'
+                public_port_timeout:
+                  type: integer
+                  description: 'Public port timeout in seconds (default: 3600)'
                 limits_memory:
                   type: string
                   description: 'Memory limit of the database'
@@ -3466,6 +3501,9 @@ paths:
                 public_port:
                   type: integer
                   description: 'Public port of the database'
+                public_port_timeout:
+                  type: integer
+                  description: 'Public port timeout in seconds (default: 3600)'
                 limits_memory:
                   type: string
                   description: 'Memory limit of the database'
@@ -3558,6 +3596,9 @@ paths:
                 public_port:
                   type: integer
                   description: 'Public port of the database'
+                public_port_timeout:
+                  type: integer
+                  description: 'Public port timeout in seconds (default: 3600)'
                 limits_memory:
                   type: string
                   description: 'Memory limit of the database'
@@ -3659,6 +3700,9 @@ paths:
                 public_port:
                   type: integer
                   description: 'Public port of the database'
+                public_port_timeout:
+                  type: integer
+                  description: 'Public port timeout in seconds (default: 3600)'
                 limits_memory:
                   type: string
                   description: 'Memory limit of the database'
@@ -3760,6 +3804,9 @@ paths:
                 public_port:
                   type: integer
                   description: 'Public port of the database'
+                public_port_timeout:
+                  type: integer
+                  description: 'Public port timeout in seconds (default: 3600)'
                 limits_memory:
                   type: string
                   description: 'Memory limit of the database'
@@ -3852,6 +3899,9 @@ paths:
                 public_port:
                   type: integer
                   description: 'Public port of the database'
+                public_port_timeout:
+                  type: integer
+                  description: 'Public port timeout in seconds (default: 3600)'
                 limits_memory:
                   type: string
                   description: 'Memory limit of the database'
@@ -4672,6 +4722,18 @@ paths:
           description: 'Pull Request Id for deploying specific PR builds. Cannot be used with tag parameter.'
           schema:
             type: integer
+        -
+          name: pull_request_id
+          in: query
+          description: 'Preview deployment identifier. Alias of pr.'
+          schema:
+            type: integer
+        -
+          name: docker_tag
+          in: query
+          description: 'Docker image tag for Docker Image preview deployments. Requires pull_request_id.'
+          schema:
+            type: string
       responses:
         '200':
           description: "Get deployment(s) UUID's"
@@ -6619,6 +6681,21 @@ paths:
                   type: string
                   enum: [traefik, caddy, none]
                   description: 'The proxy type.'
+                concurrent_builds:
+                  type: integer
+                  description: 'Number of concurrent builds.'
+                dynamic_timeout:
+                  type: integer
+                  description: 'Deployment timeout in seconds.'
+                deployment_queue_limit:
+                  type: integer
+                  description: 'Maximum number of queued deployments.'
+                server_disk_usage_notification_threshold:
+                  type: integer
+                  description: 'Server disk usage notification threshold (%).'
+                server_disk_usage_check_frequency:
+                  type: string
+                  description: 'Cron expression for disk usage check frequency.'
               type: object
       responses:
         '201':
@@ -8067,6 +8144,9 @@ components:
           type: string
         pull_request_id:
           type: integer
+        docker_registry_image_tag:
+          type: string
+          nullable: true
         force_rebuild:
           type: boolean
         commit:
