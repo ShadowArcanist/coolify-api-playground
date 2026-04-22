@@ -1,39 +1,313 @@
-name: Deploy API Playground to Production
+name: Update Codebase and Deploy Production
 
 on:
-  release:
-    types: [published]
   workflow_dispatch:
-  repository_dispatch:
-    types: [coolify-release]
+    inputs:
+      version:
+        description: "Specific Coolify version to use (for example v4.0.0-beta.444)"
+        required: true
+        default: "v4.0.0-beta.444"
+  schedule:
+    - cron: "0 16 * * *"
+
+permissions:
+  contents: write
+  deployments: write
+  packages: write
+
+concurrency:
+  group: update-and-deploy-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  deploy-production:
+  update-and-deploy:
     runs-on: ubuntu-latest
+    if: github.repository == 'ShadowArcanist/coolify-api-playground'
+    env:
+      APP_NAME: coolify-api-playground
+      DEPLOY_ENVIRONMENT: Production
+      WATCHD_URL: ${{ secrets.WATCHD_URL }}
+      WATCHD_SHARED_SECRET: ${{ secrets.WATCHD_SHARED_SECRET }}
+      PRODUCTION_URL: ${{ vars.PRODUCTION_URL }}
 
     steps:
-      - name: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          ref: ${{ github.ref_name }}
+
+      - name: Get Coolify release version
+        id: version
+        if: inputs.version == ''
+        shell: bash
+        run: |
+          VERSION="$(curl -fsSL https://api.github.com/repos/coollabsio/coolify/releases/latest | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"])')"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Set version
+        id: set_version
+        shell: bash
+        run: |
+          VERSION="${{ inputs.version != '' && inputs.version || steps.version.outputs.version }}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Decide whether deploy is needed
+        id: decide
+        shell: bash
+        run: |
+          TARGET_VERSION="${{ steps.set_version.outputs.version }}"
+          CURRENT_VERSION="$(python3 - <<'PY'
+          import pathlib
+
+          path = pathlib.Path("VERSION.txt")
+          if not path.exists():
+              print("")
+              raise SystemExit(0)
+
+          print(path.read_text(encoding="utf-8").strip())
+          PY
+          )"
+
+          if [ -n "${CURRENT_VERSION}" ] && [ "${CURRENT_VERSION}" = "${TARGET_VERSION}" ]; then
+            CHANGED=false
+          else
+            CHANGED=true
+          fi
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            MANUAL=true
+          else
+            MANUAL=false
+          fi
+
+          if [ "${CHANGED}" = "true" ] || [ "${MANUAL}" = "true" ]; then
+            DEPLOY=true
+          else
+            DEPLOY=false
+          fi
+
+          if [ "${MANUAL}" = "true" ] && [ "${CHANGED}" = "false" ]; then
+            FORCE_REDEPLOY=true
+          else
+            FORCE_REDEPLOY=false
+          fi
+
+          echo "current_version=${CURRENT_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "target_version=${TARGET_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "changed=${CHANGED}" >> "$GITHUB_OUTPUT"
+          echo "manual=${MANUAL}" >> "$GITHUB_OUTPUT"
+          echo "deploy=${DEPLOY}" >> "$GITHUB_OUTPUT"
+          echo "force_redeploy=${FORCE_REDEPLOY}" >> "$GITHUB_OUTPUT"
+
+      - name: Stop when nothing changed
+        if: steps.decide.outputs.deploy != 'true'
+        shell: bash
+        run: |
+          echo "No version change detected. Skipping commit, image push, and deploy."
 
       - name: Setup Bun
+        if: steps.decide.outputs.changed == 'true'
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.2.22
 
+      - name: Download openapi.yaml from Coolify
+        if: steps.decide.outputs.changed == 'true'
+        shell: bash
+        run: |
+          curl -fsSL https://github.com/coollabsio/coolify/raw/v4.x/openapi.yaml -o openapi.yaml
+
+      - name: Update version and servers
+        if: steps.decide.outputs.changed == 'true'
+        shell: bash
+        run: |
+          sed -i "s/^  version: '.*'/  version: '${{ steps.set_version.outputs.version }}'/" openapi.yaml
+          head -4 openapi.yaml > openapi-temp.yaml
+          sed -n '5,12p' sample-openapi.yaml >> openapi-temp.yaml
+          tail -n +9 openapi.yaml >> openapi-temp.yaml
+          mv openapi-temp.yaml openapi.yaml
+
+      - name: Update content metadata
+        if: steps.decide.outputs.changed == 'true'
+        shell: bash
+        run: |
+          VERSION="${{ steps.set_version.outputs.version }}"
+          printf '{"pages":["---%s---","..."]}\n' "$VERSION" > content/meta.json
+
+      - name: Update VERSION.txt
+        if: steps.decide.outputs.changed == 'true'
+        shell: bash
+        run: |
+          printf '%s\n' "${{ steps.set_version.outputs.version }}" > VERSION.txt
+
       - name: Install dependencies
+        if: steps.decide.outputs.changed == 'true'
         run: bun install --no-cache
 
-      - name: Build static Next.js site
-        env:
-          VERSION: ${{ github.event_name == 'release' && github.event.release.tag_name || (github.event_name == 'repository_dispatch' && github.event.client_payload.version || '') }}
-        run: |
-          echo "Building with version: $VERSION"
-          bun run build
+      - name: Generate API documentation
+        if: steps.decide.outputs.changed == 'true'
+        run: bun scripts/generate-api-docs.mjs
 
-      - name: Deploy to Cloudflare Pages
-        uses: cloudflare/wrangler-action@v3
+      - name: Commit and push changes
+        if: steps.decide.outputs.changed == 'true'
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No generated changes to commit"
+            exit 0
+          fi
+          git commit -m "Update API docs to ${{ steps.set_version.outputs.version }}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+
+      - name: Resolve deploy SHA
+        if: steps.decide.outputs.deploy == 'true'
+        id: deploy_sha
+        shell: bash
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare image reference
+        if: steps.decide.outputs.deploy == 'true'
+        id: refs
+        shell: bash
+        run: |
+          echo "image=ghcr.io/shadowarcanist/coolify-api-playground:latest" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Docker Buildx
+        if: steps.decide.outputs.deploy == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        if: steps.decide.outputs.deploy == 'true'
+        uses: docker/login-action@v3
         with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy out --project-name=coolify-api --branch main
-          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        if: steps.decide.outputs.deploy == 'true'
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.refs.outputs.image }}
+
+      - name: Create GitHub deployment object
+        if: steps.decide.outputs.deploy == 'true'
+        id: deployment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          export DEPLOY_SHA="${{ steps.deploy_sha.outputs.sha }}"
+          python3 - <<'PY' > deployment-request.json
+          import json
+          import os
+          import sys
+
+          payload = {
+              "ref": os.environ["DEPLOY_SHA"],
+              "environment": os.environ["DEPLOY_ENVIRONMENT"],
+              "auto_merge": False,
+              "required_contexts": [],
+              "description": "Deployment requested by GitHub Actions",
+          }
+          sys.stdout.write(json.dumps(payload, separators=(",", ":")))
+          PY
+
+          curl -fsSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            --data-binary @deployment-request.json \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/deployments" \
+            > deployment-response.json
+
+          DEPLOYMENT_ID="$(python3 - <<'PY'
+          import json
+          with open("deployment-response.json", "r", encoding="utf-8") as handle:
+              print(json.load(handle)["id"])
+          PY
+          )"
+          echo "deployment_id=${DEPLOYMENT_ID}" >> "$GITHUB_OUTPUT"
+
+      - name: Send deploy webhook to watchd
+        if: steps.decide.outputs.deploy == 'true'
+        env:
+          DEPLOYMENT_ID: ${{ steps.deployment.outputs.deployment_id }}
+          DEPLOY_SHA: ${{ steps.deploy_sha.outputs.sha }}
+          RELEASE_VERSION: ${{ steps.set_version.outputs.version }}
+          FORCE_REDEPLOY: ${{ steps.decide.outputs.force_redeploy }}
+          GITHUB_RUN_ID_VALUE: ${{ github.run_id }}
+          IMAGE: ${{ steps.refs.outputs.image }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        shell: bash
+        run: |
+          TIMESTAMP="$(date +%s)"
+          NONCE="$(uuidgen | tr '[:upper:]' '[:lower:]')"
+          EVENT_ID="$(uuidgen | tr '[:upper:]' '[:lower:]')"
+          export WATCHD_URL
+          WATCHD_PATH="$(python3 - <<'PY'
+          import os
+          from urllib.parse import urlparse
+
+          parsed = urlparse(os.environ["WATCHD_URL"])
+          path = parsed.path or "/"
+          print(path)
+          PY
+          )"
+          export TIMESTAMP NONCE EVENT_ID
+
+          python3 - <<'PY' > payload.json
+          import json
+          import os
+          import sys
+
+          payload = {
+              "app_name": os.environ["APP_NAME"],
+              "version": os.environ["RELEASE_VERSION"],
+              "image": os.environ["IMAGE"],
+              "event_id": os.environ["EVENT_ID"],
+              "github": {
+                  "repository": os.environ["GITHUB_REPOSITORY"],
+                  "deployment_id": int(os.environ["DEPLOYMENT_ID"]),
+                  "environment": os.environ["DEPLOY_ENVIRONMENT"],
+                  "run_url": f'{os.environ["GITHUB_SERVER_URL"]}/{os.environ["GITHUB_REPOSITORY"]}/actions/runs/{os.environ["GITHUB_RUN_ID"]}',
+              },
+          }
+
+          production_url = os.environ.get("PRODUCTION_URL", "").strip()
+          if production_url:
+              payload["github"]["environment_url"] = production_url
+
+          if os.environ["FORCE_REDEPLOY"] == "true":
+              payload["version"] = f'{os.environ["RELEASE_VERSION"]}+manual.{os.environ["GITHUB_RUN_ID_VALUE"]}'
+          else:
+              payload["source_sha"] = os.environ["DEPLOY_SHA"]
+              payload["image_digest"] = os.environ["IMAGE_DIGEST"]
+
+          sys.stdout.write(json.dumps(payload, separators=(",", ":")))
+          PY
+
+          BODY="$(cat payload.json)"
+          CANONICAL="$(printf 'POST\n%s\n%s\n%s\n%s' \
+            "${WATCHD_PATH}" \
+            "${TIMESTAMP}" \
+            "${NONCE}" \
+            "${BODY}")"
+          SIGNATURE="sha256=$(printf '%s' "${CANONICAL}" | openssl dgst -sha256 -hmac "${WATCHD_SHARED_SECRET}" -hex | sed 's/^.* //')"
+
+          curl -fsSL \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -H "X-Deploy-Timestamp: ${TIMESTAMP}" \
+            -H "X-Deploy-Nonce: ${NONCE}" \
+            -H "X-Deploy-Signature: ${SIGNATURE}" \
+            --data-binary @payload.json \
+            "${WATCHD_URL}"
