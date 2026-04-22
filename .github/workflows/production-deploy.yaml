@@ -20,9 +20,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  update-and-deploy:
+  prepare:
+    name: Prepare Sources
     runs-on: ubuntu-latest
     if: github.repository == 'ShadowArcanist/coolify-api-playground'
+    outputs:
+      release_version: ${{ steps.set_version.outputs.version }}
+      changed: ${{ steps.decide.outputs.changed }}
+      deploy: ${{ steps.decide.outputs.deploy }}
+      force_redeploy: ${{ steps.decide.outputs.force_redeploy }}
+      deploy_sha: ${{ steps.finalize.outputs.deploy_sha }}
+      image: ${{ steps.refs.outputs.image }}
     env:
       APP_NAME: coolify-api-playground
       DEPLOY_ENVIRONMENT: Production
@@ -39,7 +47,7 @@ jobs:
 
       - name: Get Coolify release version
         id: version
-        if: inputs.version == ''
+        if: github.event_name != 'workflow_dispatch' || inputs.version == ''
         shell: bash
         run: |
           VERSION="$(curl -fsSL https://api.github.com/repos/coollabsio/coolify/releases/latest | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"])')"
@@ -49,7 +57,11 @@ jobs:
         id: set_version
         shell: bash
         run: |
-          VERSION="${{ inputs.version != '' && inputs.version || steps.version.outputs.version }}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="${{ steps.version.outputs.version }}"
+          fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Decide whether deploy is needed
@@ -163,26 +175,45 @@ jobs:
           git commit -m "Update API docs to ${{ steps.set_version.outputs.version }}"
           git push origin "HEAD:${GITHUB_REF_NAME}"
 
-      - name: Resolve deploy SHA
-        if: steps.decide.outputs.deploy == 'true'
-        id: deploy_sha
+      - name: Finalize deploy SHA
+        id: finalize
         shell: bash
         run: |
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "deploy_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Prepare image reference
-        if: steps.decide.outputs.deploy == 'true'
         id: refs
         shell: bash
         run: |
-          echo "image=ghcr.io/shadowarcanist/coolify-api-playground:latest" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/shadowarcanist/coolify-api-playground" >> "$GITHUB_OUTPUT"
+
+  build-push:
+    name: Build ${{ matrix.arch }}
+    needs: prepare
+    if: needs.prepare.outputs.deploy == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          ref: ${{ needs.prepare.outputs.deploy_sha }}
 
       - name: Setup Docker Buildx
-        if: steps.decide.outputs.deploy == 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: Login to GHCR
-        if: steps.decide.outputs.deploy == 'true'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -190,25 +221,69 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push image
-        if: steps.decide.outputs.deploy == 'true'
-        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
-          platforms: linux/amd64,linux/arm64
-          tags: ${{ steps.refs.outputs.image }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          platforms: ${{ matrix.platform }}
+          tags: |
+            ${{ needs.prepare.outputs.image }}:${{ needs.prepare.outputs.release_version }}-${{ matrix.arch }}
+            ${{ needs.prepare.outputs.image }}:latest-${{ matrix.arch }}
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
+
+  merge-manifest-and-deploy:
+    name: Merge Manifest and Deploy
+    needs:
+      - prepare
+      - build-push
+    if: needs.prepare.outputs.deploy == 'true'
+    runs-on: ubuntu-24.04
+    env:
+      APP_NAME: coolify-api-playground
+      DEPLOY_ENVIRONMENT: Production
+      WATCHD_URL: ${{ secrets.WATCHD_URL }}
+      WATCHD_SHARED_SECRET: ${{ secrets.WATCHD_SHARED_SECRET }}
+      PRODUCTION_URL: ${{ vars.PRODUCTION_URL }}
+      IMAGE: ${{ needs.prepare.outputs.image }}:latest
+      RELEASE_VERSION: ${{ needs.prepare.outputs.release_version }}
+      DEPLOY_SHA: ${{ needs.prepare.outputs.deploy_sha }}
+      FORCE_REDEPLOY: ${{ needs.prepare.outputs.force_redeploy }}
+      WEBHOOK_RETRY_ATTEMPTS: "40"
+      WEBHOOK_RETRY_DELAY_SECONDS: "15"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          ref: ${{ needs.prepare.outputs.deploy_sha }}
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and publish multi-arch manifest
+        shell: bash
+        run: |
+          docker buildx imagetools create \
+            "${{ needs.prepare.outputs.image }}:${RELEASE_VERSION}-amd64" \
+            "${{ needs.prepare.outputs.image }}:${RELEASE_VERSION}-arm64" \
+            --tag "${{ needs.prepare.outputs.image }}:${RELEASE_VERSION}" \
+            --tag "${IMAGE}"
 
       - name: Create GitHub deployment object
-        if: steps.decide.outputs.deploy == 'true'
         id: deployment
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
-          export DEPLOY_SHA="${{ steps.deploy_sha.outputs.sha }}"
           python3 - <<'PY' > deployment-request.json
           import json
           import os
@@ -241,17 +316,9 @@ jobs:
           echo "deployment_id=${DEPLOYMENT_ID}" >> "$GITHUB_OUTPUT"
 
       - name: Send deploy webhook to watchd
-        if: steps.decide.outputs.deploy == 'true'
         env:
           DEPLOYMENT_ID: ${{ steps.deployment.outputs.deployment_id }}
-          DEPLOY_SHA: ${{ steps.deploy_sha.outputs.sha }}
-          RELEASE_VERSION: ${{ steps.set_version.outputs.version }}
-          FORCE_REDEPLOY: ${{ steps.decide.outputs.force_redeploy }}
           GITHUB_RUN_ID_VALUE: ${{ github.run_id }}
-          IMAGE: ${{ steps.refs.outputs.image }}
-          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
-          WEBHOOK_RETRY_ATTEMPTS: "40"
-          WEBHOOK_RETRY_DELAY_SECONDS: "15"
         shell: bash
         run: |
           export WATCHD_URL
@@ -293,7 +360,6 @@ jobs:
               payload["version"] = f'{os.environ["RELEASE_VERSION"]}+manual.{os.environ["GITHUB_RUN_ID_VALUE"]}'
           else:
               payload["source_sha"] = os.environ["DEPLOY_SHA"]
-              payload["image_digest"] = os.environ["IMAGE_DIGEST"]
 
           sys.stdout.write(json.dumps(payload, separators=(",", ":")))
           PY
