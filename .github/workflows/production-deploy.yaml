@@ -247,11 +247,10 @@ jobs:
           GITHUB_RUN_ID_VALUE: ${{ github.run_id }}
           IMAGE: ${{ steps.refs.outputs.image }}
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          WEBHOOK_RETRY_ATTEMPTS: "40"
+          WEBHOOK_RETRY_DELAY_SECONDS: "15"
         shell: bash
         run: |
-          TIMESTAMP="$(date +%s)"
-          NONCE="$(uuidgen | tr '[:upper:]' '[:lower:]')"
-          EVENT_ID="$(uuidgen | tr '[:upper:]' '[:lower:]')"
           export WATCHD_URL
           WATCHD_PATH="$(python3 - <<'PY'
           import os
@@ -262,7 +261,8 @@ jobs:
           print(path)
           PY
           )"
-          export TIMESTAMP NONCE EVENT_ID
+          EVENT_ID="$(uuidgen | tr '[:upper:]' '[:lower:]')"
+          export EVENT_ID
 
           python3 - <<'PY' > payload.json
           import json
@@ -296,18 +296,45 @@ jobs:
           PY
 
           BODY="$(cat payload.json)"
-          CANONICAL="$(printf 'POST\n%s\n%s\n%s\n%s' \
-            "${WATCHD_PATH}" \
-            "${TIMESTAMP}" \
-            "${NONCE}" \
-            "${BODY}")"
-          SIGNATURE="sha256=$(printf '%s' "${CANONICAL}" | openssl dgst -sha256 -hmac "${WATCHD_SHARED_SECRET}" -hex | sed 's/^.* //')"
 
-          curl -fsSL \
-            -X POST \
-            -H "Content-Type: application/json" \
-            -H "X-Deploy-Timestamp: ${TIMESTAMP}" \
-            -H "X-Deploy-Nonce: ${NONCE}" \
-            -H "X-Deploy-Signature: ${SIGNATURE}" \
-            --data-binary @payload.json \
-            "${WATCHD_URL}"
+          attempt=1
+          while [ "${attempt}" -le "${WEBHOOK_RETRY_ATTEMPTS}" ]; do
+            TIMESTAMP="$(date +%s)"
+            NONCE="$(uuidgen | tr '[:upper:]' '[:lower:]')"
+            CANONICAL="$(printf 'POST\n%s\n%s\n%s\n%s' \
+              "${WATCHD_PATH}" \
+              "${TIMESTAMP}" \
+              "${NONCE}" \
+              "${BODY}")"
+            SIGNATURE="sha256=$(printf '%s' "${CANONICAL}" | openssl dgst -sha256 -hmac "${WATCHD_SHARED_SECRET}" -hex | sed 's/^.* //')"
+
+            HTTP_STATUS="$(curl -sS \
+              -o webhook-response.txt \
+              -w '%{http_code}' \
+              -X POST \
+              -H "Content-Type: application/json" \
+              -H "X-Deploy-Timestamp: ${TIMESTAMP}" \
+              -H "X-Deploy-Nonce: ${NONCE}" \
+              -H "X-Deploy-Signature: ${SIGNATURE}" \
+              --data-binary @payload.json \
+              "${WATCHD_URL}")"
+
+            if [ "${HTTP_STATUS}" = "202" ] || [ "${HTTP_STATUS}" = "200" ]; then
+              echo "watchd accepted deploy request with status ${HTTP_STATUS}"
+              exit 0
+            fi
+
+            if [ "${HTTP_STATUS}" = "409" ] && [ "${attempt}" -lt "${WEBHOOK_RETRY_ATTEMPTS}" ]; then
+              echo "watchd busy for ${APP_NAME}, retrying in ${WEBHOOK_RETRY_DELAY_SECONDS}s (attempt ${attempt}/${WEBHOOK_RETRY_ATTEMPTS})"
+              sleep "${WEBHOOK_RETRY_DELAY_SECONDS}"
+              attempt=$((attempt + 1))
+              continue
+            fi
+
+            echo "watchd request failed with status ${HTTP_STATUS}"
+            cat webhook-response.txt
+            exit 1
+          done
+
+          echo "watchd remained busy for ${APP_NAME} after ${WEBHOOK_RETRY_ATTEMPTS} attempts"
+          exit 1
