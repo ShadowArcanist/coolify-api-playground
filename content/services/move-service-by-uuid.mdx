@@ -1,0 +1,20 @@
+---
+title: Move
+full: true
+_openapi:
+  method: POST
+  route: /services/{uuid}/move
+  toc: []
+  structuredData:
+    headings: []
+    contents:
+      - content: >-
+          Move service to another project/environment. This is a purely
+          organizational change — running containers are not affected. Note:
+          after moving, the service will pick up shared environment variables
+          from the new environment on the next deployment.
+---
+
+Move service to another project/environment. This is a purely organizational change — running containers are not affected. Note: after moving, the service will pick up shared environment variables from the new environment on the next deployment.
+
+<APIPage document={"./openapi.yaml"} operations={[{"path":"/services/{uuid}/move","method":"post"}]} webhooks={[]} hasHead={false} />

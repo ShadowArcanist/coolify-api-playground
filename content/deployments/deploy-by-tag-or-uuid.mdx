@@ -2,17 +2,15 @@
 title: Deploy
 full: true
 _openapi:
-  method: GET
+  method: POST
   route: /deploy
   toc: []
   structuredData:
     headings: []
     contents:
-      - content: >-
-          Deploy by tag or uuid. `Post` request also accepted with `uuid` and
-          `tag` json body.
+      - content: Deploy by tag or UUID using query parameters or a JSON body.
 ---
 
-Deploy by tag or uuid. `Post` request also accepted with `uuid` and `tag` json body.
+Deploy by tag or UUID using query parameters or a JSON body.
 
-<APIPage document={"./openapi.yaml"} operations={[{"path":"/deploy","method":"get"}]} webhooks={[]} hasHead={false} />
+<APIPage document={"./openapi.yaml"} operations={[{"path":"/deploy","method":"post"}]} webhooks={[]} hasHead={false} />

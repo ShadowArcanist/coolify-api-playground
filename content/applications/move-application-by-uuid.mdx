@@ -1,0 +1,20 @@
+---
+title: Move
+full: true
+_openapi:
+  method: POST
+  route: /applications/{uuid}/move
+  toc: []
+  structuredData:
+    headings: []
+    contents:
+      - content: >-
+          Move application to another project/environment. This is a purely
+          organizational change — running containers are not affected. Note:
+          after moving, the application will pick up shared environment
+          variables from the new environment on the next deployment.
+---
+
+Move application to another project/environment. This is a purely organizational change — running containers are not affected. Note: after moving, the application will pick up shared environment variables from the new environment on the next deployment.
+
+<APIPage document={"./openapi.yaml"} operations={[{"path":"/applications/{uuid}/move","method":"post"}]} webhooks={[]} hasHead={false} />

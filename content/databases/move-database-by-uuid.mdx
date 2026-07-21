@@ -1,0 +1,20 @@
+---
+title: Move
+full: true
+_openapi:
+  method: POST
+  route: /databases/{uuid}/move
+  toc: []
+  structuredData:
+    headings: []
+    contents:
+      - content: >-
+          Move database to another project/environment. This is a purely
+          organizational change — running containers are not affected. Note:
+          after moving, the database will pick up shared environment variables
+          from the new environment on the next deployment.
+---
+
+Move database to another project/environment. This is a purely organizational change — running containers are not affected. Note: after moving, the database will pick up shared environment variables from the new environment on the next deployment.
+
+<APIPage document={"./openapi.yaml"} operations={[{"path":"/databases/{uuid}/move","method":"post"}]} webhooks={[]} hasHead={false} />

@@ -1,0 +1,20 @@
+---
+title: Get service logs.
+full: true
+_openapi:
+  method: GET
+  route: /services/{uuid}/logs
+  toc: []
+  structuredData:
+    headings: []
+    contents:
+      - content: >-
+          Get logs for a specific service sub-resource by service UUID. The
+          `sub_service_name` query parameter must match the `name` field of one
+          of the service applications or databases returned by `GET
+          /services/{uuid}`.
+---
+
+Get logs for a specific service sub-resource by service UUID. The `sub_service_name` query parameter must match the `name` field of one of the service applications or databases returned by `GET /services/{uuid}`.
+
+<APIPage document={"./openapi.yaml"} operations={[{"path":"/services/{uuid}/logs","method":"get"}]} webhooks={[]} hasHead={false} />
