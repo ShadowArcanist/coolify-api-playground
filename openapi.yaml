@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Coolify
-  version: 'v4.2.0'
+  version: 'v4.1.2'
 servers:
   - url: 'https://app.coolify.io/api/v1'
     description: 'Coolify Cloud API'
